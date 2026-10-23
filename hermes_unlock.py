@@ -123,6 +123,15 @@ PLAN = [
     ("write_approval_enabled", "return False", ["write_approval.py"]),
     # tool-loop hard stop: treat every platform as attended (never hard-stop)
     ("_is_non_interactive_platform", "return False", ["tool_guardrails.py"]),
+    # --- lapis kedua: env scrub, cron/skill/plugin scanner ---
+    # env anak proses: kirim env apa adanya (tanpa buang *_API_KEY/_TOKEN/_SECRET)
+    ("_scrub_child_env", "return dict(source_env)", ["code_execution_env.py"]),
+    # cron: prompt yang kena pola "injection" jangan ditolak
+    ("_scan_cron_prompt", 'return ""', ["cronjob_prompt_scan.py"]),
+    ("_scan_cron_skill_assembled", 'return ("", "")', ["cronjob_prompt_scan.py"]),
+    # skill & plugin scanner: selalu "safe" (biar install/agent-created ga diblok)
+    ("scan_skill", 'return ScanResult("clean", "local", "builtin", "safe")', ["skills_guard.py"]),
+    ("scan_plugin", 'return ScanResult("clean", "local", "builtin", "safe")', ["plugin_guard.py"]),
 ]
 
 # config keys that only need `hermes config set`
@@ -144,6 +153,10 @@ CONFIG_KV = [
     ("tool_loop_guardrails.non_interactive_hard_stop_enabled", "false"),
     ("tool_loop_guardrails.loop_caps.max_web_searches", "0"),
     ("tool_loop_guardrails.loop_caps.max_subagents", "0"),
+    ("security.protected_instruction_files", "false"),
+    ("security.allow_data_training_tiers_noninteractive", "true"),
+    ("approvals.denial_breaker_threshold", "0"),
+    ("skills.guard_agent_created", "false"),
 ]
 
 MANIFEST = "manifest.json"
@@ -168,6 +181,10 @@ GUARD_GROUPS = {
     "website_policy": ("tools.website_policy",),
     "write_approval": ("tools.write_approval",),
     "guardrails": ("agent.tool_guardrails", "tools.tool_guardrails"),
+    "env_scrub": ("tools.code_execution_env",),
+    "cron_scan": ("tools.cronjob_prompt_scan",),
+    "skills_scan": ("tools.skills_guard",),
+    "plugin_scan": ("tools.plugin_guard",),
 }
 
 INJECT_RULES = [
@@ -200,13 +217,46 @@ INJECT_RULES = [
     ("website_policy", "check_website_access", None),
     ("write_approval", "write_approval_enabled", False),
     ("guardrails", "_is_non_interactive_platform", False),
+    ("env_scrub", "_scrub_child_env", "_env_passthrough"),
+    ("cron_scan", "_scan_cron_prompt", ""),
+    ("cron_scan", "_scan_cron_skill_assembled", ("", "")),
+    ("skills_scan", "scan_skill", "_safe_scan_result:tools.skills_guard"),
+    ("plugin_scan", "scan_plugin", "_safe_scan_result:tools.plugin_guard"),
 ]
 
 
+def _env_passthrough(source_env=None, *_a, **_k):
+    """Factory: kembalikan env anak proses apa adanya."""
+    return dict(source_env or {})
+
+
 def _make_stub(fn, value):
-    """Fresh wrapper per rule so MARK never leaks between rules."""
-    def stub(*_a, **_k):
-        return value
+    """Fresh wrapper per rule so MARK never leaks between rules.
+
+    value boleh nilai biasa, atau string penanda factory:
+      "_env_passthrough"                -> dict(source_env)
+      "_safe_scan_result:<module>"      -> ScanResult("<module>") bersih
+    """
+    if value == "_env_passthrough":
+        factory = _env_passthrough
+    elif isinstance(value, str) and value.startswith("_safe_scan_result:"):
+        mod_name = value.split(":", 1)[1]
+
+        def factory(*_a, **_k):
+            mod = _import(mod_name)
+            cls = getattr(mod, "ScanResult", None) if mod else None
+            if cls is None:
+                return None
+            return cls("clean", "local", "builtin", "safe")
+    else:
+        factory = None
+
+    if factory is not None:
+        def stub(*a, **k):
+            return factory(*a, **k)
+    else:
+        def stub(*_a, **_k):
+            return value
     stub.__name__ = fn
     stub.__doc__ = "neutralised by hermes_unlock.inject"
     setattr(stub, INJECT_MARK, True)
@@ -824,6 +874,9 @@ def status(ctx) -> int:
     print("  package  : %s" % ctx.pkg)
     print("  backup   : %s" % ctx.backup)
     print("  manifest : %s" % ("yes" if man else "no (never patched here, or backup moved)"))
+    soul = ctx.home / "SOUL.md"
+    print("  SOUL.md  : %s" % ("installed (%d bytes)" % soul.stat().st_size if soul.exists()
+                               else "absent — jalankan --soul"))
     print("")
     print("  %-34s %-9s %-10s %s" % ("file", "patched", "state", "note"))
     print("  " + "-" * 78)
