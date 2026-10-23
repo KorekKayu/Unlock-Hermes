@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+wm.log
+wm.pid
+*.zip
