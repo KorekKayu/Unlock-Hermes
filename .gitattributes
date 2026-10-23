@@ -1,0 +1,7 @@
+# simpan LF di repo, tapi checkout sesuai OS target
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
