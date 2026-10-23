@@ -360,6 +360,7 @@ class Ctx:
     pybin: str
     backup: Path
     dry: bool = False
+    pkg_explicit: bool = False
     modules: dict = field(default_factory=dict)      # filename -> path
     touched: dict = field(default_factory=dict)      # path -> [fn, ...]
     cache: dict = field(default_factory=dict)        # path -> (src, ast tree)
@@ -408,9 +409,29 @@ def find_home(explicit=None) -> Path:
     sys.exit("ERROR: HERMES_HOME not found — set HERMES_HOME or pass --home DIR")
 
 
+def _launcher_python():
+    """Python yang benar-benar dipakai launcher (bukan asumsi dari nama folder)."""
+    launcher = find_launcher()
+    if not launcher:
+        return None
+    r = _run(launcher + ["--print-runtime-command"], timeout=90)
+    if not r or not (r.stdout or "").strip():
+        return None
+    try:
+        argv = json.loads((r.stdout or "").strip().splitlines()[-1])
+    except Exception:
+        return None
+    if isinstance(argv, list) and argv and os.path.exists(str(argv[0])):
+        return str(argv[0])
+    return None
+
+
 def find_pybin(home: Path, explicit=None) -> str:
     if explicit:
         return explicit
+    lp = _launcher_python()
+    if lp:
+        return lp
     tail = ("Scripts", "python.exe") if IS_WIN else ("bin", "python")
     pats = [
         home / "installs" / "*" / "environments" / "*" / "venv" / Path(*tail),
@@ -487,12 +508,23 @@ def resolve_pkg(home: Path, pybin: str, explicit=None, strict_home=False) -> Pat
             if (pkg / "tools").is_dir() or (pkg / "agent").is_dir():
                 return pkg
 
-    for pat in (home / "installs" / "*" / "environments" / "*" / "workspace",
-                home / "installs" / "*" / "workspace",
-                home / "hermes-agent"):
-        for p in sorted(glob.glob(str(pat)), reverse=True):
-            if os.path.isdir(os.path.join(p, "tools")) and os.path.isdir(os.path.join(p, "agent")):
-                return Path(p).resolve()
+    # 2) fallback: hanya kalau kandidatnya tunggal. Kalau lebih dari satu, JANGAN
+    #    menebak — dulu sorted() bikin patch mendarat di salinan yang salah.
+    cands = [t for t in all_trees(home) if inside(Path(t))]
+    if len(cands) == 1:
+        return Path(cands[0]).resolve()
+    if len(cands) > 1:
+        hint = os.environ.get("HERMES_UNLOCK_PICK_LATEST") == "1"
+        if hint:
+            newest = max(cands, key=lambda t: max(
+                (f.stat().st_mtime for f in Path(t).rglob("*.py")), default=0))
+            print("[!] %d code tree ditemukan, dipilih yang paling baru: %s" % (len(cands), newest))
+            return Path(newest).resolve()
+        lines = ["ERROR: %d code tree ditemukan dan tidak ada info dari launcher `hermes`." % len(cands),
+                 "       Patch ke tree yang salah = tidak berefek. Pilih satu:"]
+        lines += ["         --pkg %s" % t for t in cands]
+        lines += ["       (atau set HERMES_UNLOCK_PICK_LATEST=1 untuk pilih yang paling baru)"]
+        sys.exit("\n".join(lines))
 
     for dirpath, _dirs, files in os.walk(str(home)):
         for fn in ("approval.py", "approval_detection.py", "file_safety.py"):
@@ -532,7 +564,8 @@ def build_ctx(a) -> Ctx:
     pybin = find_pybin(home, a.pybin)
     pkg = resolve_pkg(home, pybin, a.pkg, strict_home=bool(a.home))
     backup = Path(a.backup_dir).expanduser().resolve() if a.backup_dir else choose_backup_dir()
-    ctx = Ctx(home=home, pkg=pkg, pybin=pybin, backup=backup, dry=bool(a.dry_run))
+    ctx = Ctx(home=home, pkg=pkg, pybin=pybin, backup=backup, dry=bool(a.dry_run),
+              pkg_explicit=bool(a.pkg))
     for d in ("agent", "tools"):
         base = pkg / d
         if base.is_dir():
@@ -769,6 +802,8 @@ def clean_all(ctx) -> int:
                 bad += 1
                 print("  [COMPILE FAIL] %s: %s" % (path, err))
         clear_pycache(ctx)
+        if not bad:
+            write_manifest(ctx)          # hash berubah setelah cleaning -> refresh
         print("  %d duplicate block(s) removed%s." % (total, ", %d FAILED" % bad if bad else ""))
     return total
 
@@ -986,11 +1021,15 @@ def install_soul(ctx) -> int:
     if ctx.dry:
         print("  [soul] would install %s -> %s" % (src.name, dst))
         return 0
-    if dst.exists():
-        bak = dst.with_name("SOUL.md.bak.%d" % int(time.time()))
-        shutil.copy2(str(dst), str(bak))
-        print("  [soul] previous SOUL.md -> %s" % bak.name)
-    shutil.copy2(str(src), str(dst))
+    try:
+        if dst.exists():
+            bak = dst.with_name("SOUL.md.bak.%d" % int(time.time()))
+            shutil.copy2(str(dst), str(bak))
+            print("  [soul] previous SOUL.md -> %s" % bak.name)
+        shutil.copy2(str(src), str(dst))
+    except OSError as exc:
+        print("  [soul] GAGAL tulis %s: %s" % (dst, exc))
+        return 1
     print("  [soul] installed -> %s" % dst)
     return 0
 
@@ -1197,9 +1236,16 @@ def restore(ctx) -> int:
     if ctx.tree_dir.is_dir():
         baks += sorted(ctx.tree_dir.glob("*.ikonaorig"))
     legacy = sorted(ctx.backup.glob("*.ikonaorig")) if ctx.backup.is_dir() else []
-    if legacy:
-        print("[!] %d backup lama tanpa penanda tree di %s — dipakai juga (hati-hati "
-              "kalau dulu pernah patch tree lain)" % (len(legacy), ctx.backup))
+    if legacy and not baks:
+        allow = bool(getattr(ctx, "pkg_explicit", False)) or os.environ.get("HERMES_UNLOCK_ALLOW_LEGACY") == "1"
+        if not allow:
+            print("ERROR: tidak ada backup untuk tree ini (%s)." % ctx.tree_dir)
+            print("       Ada %d backup lama TANPA penanda tree di %s — asal tree-nya tidak"
+                  % (len(legacy), ctx.backup))
+            print("       diketahui, jadi tidak dipakai otomatis (bisa menimpa tree yang salah).")
+            print("       Kalau yakin: tambahkan --pkg <dir> atau set HERMES_UNLOCK_ALLOW_LEGACY=1")
+            return 1
+        print("[!] memakai %d backup lama tanpa penanda tree (dipaksa)" % len(legacy))
         baks += legacy
     if not baks:
         print("ERROR: tidak ada *.ikonaorig di %s (atau %s)" % (ctx.tree_dir, ctx.backup))
@@ -1251,7 +1297,8 @@ def confirm_run(ctx, what="INJECT") -> bool:
     print("")
     print("   backup original : %s" % ctx.backup)
     print("                     (dibuat sekali, backup lama tidak pernah ditimpa)")
-    print("   rollback        : python3 hermes_unlock.py --restore")
+    print("   rollback        : %s hermes_unlock.py --restore"
+          % ("python" if IS_WIN else "python3"))
     print("   catatan         : `hermes update` menimpa patch -> jalankan ulang script ini")
     print("-" * 78)
 
@@ -1318,6 +1365,9 @@ def main(argv=None) -> int:
         print_banner()
 
     if a.inject or a.inject_watch:
+        if a.operator_id:
+            ctx0 = build_ctx(a)
+            set_operator_allowlist(ctx0, a.operator_id.split(","))
         total = inject_unlock(verbose=True)
         if a.inject_watch:
             inject_watch(verbose=True)

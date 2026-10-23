@@ -353,6 +353,13 @@ Patcher selalu print tree yang dipakai, plus daftar tree lain yang **tidak** dis
 
 Paksa manual kalau perlu: `--pkg <dir>` (harus ada `tools/` + `agent/`).
 
+Kalau launcher tidak bisa ditanya (mis. `hermes` tidak di PATH) **dan** ada lebih dari
+satu tree, patcher **menolak menebak** — dia print semua kandidat lalu minta `--pkg`.
+Dulu dia pakai `sorted()` dan diam-diam mendarat di salinan yang salah.
+
+Interpreter verifikasi juga diambil dari launcher (`--print-runtime-command`), bukan
+asumsi dari nama folder venv.
+
 **Backup per tree.** Backup tidak lagi flat — disimpan per package root:
 `<backup>/tree-<hash>/` + `tree.txt` + `manifest.json`. Dua tree dengan nama file sama
 tidak saling menimpa, dan `--restore` hanya memulihkan backup milik tree itu (backup
@@ -481,6 +488,9 @@ Dijalankan di Windows 10 Pro 19045, Python 3.14.7, Hermes 0.21.6:
 | Resolusi target | `hermes --version` → `hermes-agent` (tree aktif); 2 tree lain dilaporkan & tidak disentuh |
 | Backup per tree | dua tree nama file sama → 2 subdir `tree-*`, restore masing-masing bersih (13/13, 0 sisa) |
 | `--operator-id` | `.env` dibackup, `GATEWAY_ALLOWED_USERS` ditulis, run kedua tidak dobel, config jadi `false` |
+| Ambigu 2 tree tanpa launcher | menolak dengan daftar `--pkg` (exit 1), tidak menebak |
+| `--clean` → manifest | 5 blok duplikat dihapus, manifest di-refresh, `--status` = `OK` (bukan SOURCE CHANGED) |
+| Backup lama tanpa penanda tree | `--restore` menolak (exit 1) kecuali `--pkg` diberikan |
 | `python -m py_compile` | OK |
 
 **Belum** diuji: eksekusi patch di install nyata (sengaja cuma `--dry-run` waktu
