@@ -144,7 +144,7 @@ CONFIG_KV = [
     ("security.tirith_enabled", "false"),
     ("security.allow_private_urls", "true"),
     ("privacy.redact_pii", "false"),
-    ("gateway.allow_all_users", "true"),
+    ("gateway.allow_all_users", "false"),
     ("gateway.loop_watchdog", "false"),
     ("gateway.bot_loop_guard.enabled", "false"),
     ("gateway.startup_watchdog", "false"),
@@ -364,6 +364,12 @@ class Ctx:
     touched: dict = field(default_factory=dict)      # path -> [fn, ...]
     cache: dict = field(default_factory=dict)        # path -> (src, ast tree)
 
+    @property
+    def tree_dir(self) -> Path:
+        """Backup per code-tree — dua tree dengan nama file sama tidak saling timpa."""
+        tag = hashlib.sha1(str(self.pkg).lower().encode("utf-8")).hexdigest()[:10]
+        return self.backup / ("tree-" + tag)
+
 
 def rel(ctx, path) -> str:
     try:
@@ -450,6 +456,20 @@ def resolve_pkg(home: Path, pybin: str, explicit=None, strict_home=False) -> Pat
         except ValueError:
             return False
 
+    # 0) otoritatif: `hermes --version` print "Install directory:" — itu tree yang
+    #    benar-benar di-import launcher (bisa beda dari installs/*/workspace!)
+    try:
+        launcher = find_launcher()
+    except Exception:
+        launcher = None
+    if launcher:
+        r = _run(launcher + ["--version"], timeout=90)
+        m = re.search(r"^Install directory:\s*(.+?)\s*$", (r.stdout if r else "") or "", re.M)
+        if m:
+            cand = Path(m.group(1)).expanduser()
+            if cand.is_dir() and (cand / "tools").is_dir() and (cand / "agent").is_dir() and inside(cand.resolve()):
+                return cand.resolve()
+
     cwds = [str(home), str(Path(pybin).parent), None]
     for cand in (pybin, sys.executable):
         for cwd in cwds:
@@ -480,6 +500,21 @@ def resolve_pkg(home: Path, pybin: str, explicit=None, strict_home=False) -> Pat
                 return Path(dirpath).resolve().parent
     sys.exit("ERROR: cannot resolve the Hermes package root (dir with tools/ + agent/). "
              "Pass --pkg DIR.")
+
+
+def all_trees(home: Path) -> list:
+    """Semua direktori yang berisi tools/ + agent/ (bisa lebih dari satu)."""
+    found = []
+    pats = [home / "installs" / "*" / "environments" / "*" / "workspace",
+            home / "installs" / "*" / "workspace",
+            home / "hermes-agent"]
+    for pat in pats:
+        for p in sorted(glob.glob(str(pat))):
+            if os.path.isdir(os.path.join(p, "tools")) and os.path.isdir(os.path.join(p, "agent")):
+                rp = str(Path(p).resolve())
+                if rp not in found:
+                    found.append(rp)
+    return found
 
 
 def choose_backup_dir() -> Path:
@@ -592,9 +627,16 @@ def insert_point(node):
 
 
 def backup_file(ctx, path):
-    """Keep the pristine original; never overwrite an existing backup."""
-    dst = ctx.backup / (Path(path).name + ".ikonaorig")
-    ctx.backup.mkdir(parents=True, exist_ok=True)
+    """Keep the pristine original; never overwrite an existing backup.
+    Disimpan per tree (ctx.tree_dir) supaya backup tree A tidak dipakai buat tree B."""
+    dst = ctx.tree_dir / (Path(path).name + ".ikonaorig")
+    ctx.tree_dir.mkdir(parents=True, exist_ok=True)
+    note = ctx.tree_dir / "tree.txt"
+    if not note.exists():
+        try:
+            note.write_text(str(ctx.pkg) + "\n", encoding="utf-8")
+        except OSError:
+            pass
     if not dst.exists():
         shutil.copy2(path, dst)
     return dst
@@ -770,7 +812,12 @@ def patch_all(ctx) -> int:
     print("  home     : %s" % ctx.home)
     print("  pybin    : %s" % ctx.pybin)
     print("  package  : %s" % ctx.pkg)
-    print("  backup   : %s%s" % (ctx.backup, "   [DRY RUN]" if ctx.dry else ""))
+    print("  backup   : %s%s" % (ctx.tree_dir, "   [DRY RUN]" if ctx.dry else ""))
+    others = [t for t in all_trees(ctx.home) if t != str(ctx.pkg)]
+    if others:
+        print("  catatan  : %d code tree lain ditemukan (TIDAK disentuh):" % len(others))
+        for t in others:
+            print("             %s" % t)
     print("")
 
     patched = 0
@@ -800,7 +847,7 @@ def patch_all(ctx) -> int:
         if err:
             failed.append(path)
             print("  [COMPILE FAIL] %s: %s" % (rel(ctx, path), err))
-            bak = ctx.backup / (Path(path).name + ".ikonaorig")
+            bak = ctx.tree_dir / (Path(path).name + ".ikonaorig")
             if bak.exists():
                 shutil.copy2(str(bak), path)
                 print("                 restored original from backup")
@@ -816,7 +863,7 @@ def patch_all(ctx) -> int:
 
 
 def manifest_path(ctx):
-    return ctx.backup / MANIFEST
+    return ctx.tree_dir / MANIFEST
 
 
 def target_files(ctx) -> dict:
@@ -845,14 +892,14 @@ def write_manifest(ctx) -> None:
         patched = [fn for fn in fns if is_patched(ctx, path, fn)]
         if not patched:
             continue
-        bak = ctx.backup / (Path(path).name + ".ikonaorig")
+        bak = ctx.tree_dir / (Path(path).name + ".ikonaorig")
         data["files"][rel(ctx, path)] = {
             "functions": sorted(patched),
             "orig_sha256": sha256(str(bak)) if bak.exists() else None,
             "patched_sha256": sha256(path),
         }
     try:
-        ctx.backup.mkdir(parents=True, exist_ok=True)
+        ctx.tree_dir.mkdir(parents=True, exist_ok=True)
         with open(manifest_path(ctx), "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
         print("  [manifest    ] %s" % manifest_path(ctx))
@@ -872,7 +919,7 @@ def status(ctx) -> int:
     man = read_manifest(ctx)
     print("  home     : %s" % ctx.home)
     print("  package  : %s" % ctx.pkg)
-    print("  backup   : %s" % ctx.backup)
+    print("  backup   : %s" % ctx.tree_dir)
     print("  manifest : %s" % ("yes" if man else "no (never patched here, or backup moved)"))
     soul = ctx.home / "SOUL.md"
     print("  SOUL.md  : %s" % ("installed (%d bytes)" % soul.stat().st_size if soul.exists()
@@ -1015,6 +1062,49 @@ def set_config(ctx) -> int:
 
 
 # -----------------------------------------------------------------------------
+# 7b. Allowlist operator
+# -----------------------------------------------------------------------------
+def set_operator_allowlist(ctx, ids) -> int:
+    """Tulis GATEWAY_ALLOWED_USERS ke $HERMES_HOME/.env (global, semua platform).
+
+    Dengan gateway.allow_all_users=false, hanya ID ini (+ user yang di-pairing
+    lewat `hermes gateway pair`) yang boleh chat ke agent.
+    """
+    ids = [i.strip() for i in ids if i.strip()]
+    if not ids:
+        print("  [operator] daftar ID kosong — dilewati")
+        return 1
+    env_path = ctx.home / ".env"
+    line = "GATEWAY_ALLOWED_USERS=%s" % ",".join(ids)
+    if ctx.dry:
+        print("  [operator] would set %s in %s" % (line, env_path))
+        return 0
+
+    text = ""
+    if env_path.exists():
+        text = env_path.read_text(encoding="utf-8", errors="replace")
+        bak = ctx.home / ".env.bak.hermes-unlock"
+        if not bak.exists():
+            shutil.copy2(str(env_path), str(bak))
+            print("  [operator] backup .env -> %s" % bak.name)
+    nl = "\r\n" if "\r\n" in text else "\n"
+    keep = [ln for ln in text.splitlines()
+            if not ln.strip().startswith("GATEWAY_ALLOWED_USERS=")]
+    keep.append(line)
+    body = nl.join(keep) + nl
+    try:
+        with open(env_path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(body)
+    except OSError as exc:
+        print("  [operator] GAGAL tulis %s: %s" % (env_path, exc))
+        return 1
+    print("  [operator] %s -> %s" % (line, env_path))
+    print("  [operator] hanya ID itu yang boleh chat; pair user lain dengan "
+          "`hermes gateway pair` kalau perlu")
+    return 0
+
+
+# -----------------------------------------------------------------------------
 # 8. Gateway restart
 # -----------------------------------------------------------------------------
 def restart_gateway(ctx) -> bool:
@@ -1103,14 +1193,24 @@ def verify(ctx) -> int:
 # 10. Restore
 # -----------------------------------------------------------------------------
 def restore(ctx) -> int:
-    if not ctx.backup.is_dir():
-        print("ERROR: backup dir %s does not exist" % ctx.backup)
-        return 1
-    baks = sorted(ctx.backup.glob("*.ikonaorig"))
+    baks = []
+    if ctx.tree_dir.is_dir():
+        baks += sorted(ctx.tree_dir.glob("*.ikonaorig"))
+    legacy = sorted(ctx.backup.glob("*.ikonaorig")) if ctx.backup.is_dir() else []
+    if legacy:
+        print("[!] %d backup lama tanpa penanda tree di %s — dipakai juga (hati-hati "
+              "kalau dulu pernah patch tree lain)" % (len(legacy), ctx.backup))
+        baks += legacy
     if not baks:
-        print("ERROR: no *.ikonaorig files in %s" % ctx.backup)
+        print("ERROR: tidak ada *.ikonaorig di %s (atau %s)" % (ctx.tree_dir, ctx.backup))
         return 1
-    print("[*] restoring %d file(s) from %s" % (len(baks), ctx.backup))
+    origin = ""
+    try:
+        origin = (ctx.tree_dir / "tree.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    print("[*] restoring %d file(s) ke %s%s"
+          % (len(baks), ctx.pkg, ("  (backup dari tree: %s)" % origin) if origin else ""))
     done, missing = 0, []
     for bak in baks:
         name = bak.name[:-len(".ikonaorig")]
@@ -1197,6 +1297,9 @@ def main(argv=None) -> int:
     ap.add_argument("--no-config", action="store_true", help="skip hermes config set")
     ap.add_argument("--no-restart", action="store_true", help="skip gateway restart")
     ap.add_argument("--no-banner", action="store_true", help="skip the IKONA-ONI banner")
+    ap.add_argument("--operator-id", metavar="ID[,ID]",
+                    help="allowlist operator: tulis GATEWAY_ALLOWED_USERS ke .env "
+                         "(wajib kalau allow_all_users=false)")
     ap.add_argument("-y", "--yes", action="store_true",
                     help="lewati konfirmasi (wajib untuk non-interaktif/cron)")
     ap.add_argument("--soul", action="store_true", help="install SOUL.md into HERMES_HOME first")
@@ -1223,6 +1326,20 @@ def main(argv=None) -> int:
         return 0
 
     ctx = build_ctx(a)
+
+    if a.operator_id:
+        set_operator_allowlist(ctx, a.operator_id.split(","))
+        # kalau cuma minta allowlist: set config terkait lalu berhenti (jangan patch source)
+        if not (a.soul or a.status or a.list or a.restore or a.clean or a.verify_only or a.inject):
+            launcher = find_launcher()
+            if launcher and not ctx.dry:
+                r = _run(launcher + ["config", "set", "gateway.allow_all_users", "false"])
+                ok = bool(r and r.returncode == 0)
+                print("  [operator] gateway.allow_all_users=false  %s" % ("OK" if ok else "ERR"))
+            elif not launcher:
+                print("  [operator] hermes CLI tidak ketemu — set manual: "
+                      "hermes config set gateway.allow_all_users false")
+            return 0
 
     if a.soul and not a.list and not a.status and not a.restore and not a.verify_only:
         print("[*] SOUL.md")

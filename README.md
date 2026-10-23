@@ -183,6 +183,26 @@ hu.inject_unlock(verbose=True)   # → jumlah target yang dinetralkan
 hu.inject_watch()                # opsional: re-apply saat module reload
 ```
 
+### Akses gateway: cuma operator
+
+`gateway.allow_all_users` sekarang **false**. Artinya tanpa allowlist, **tidak ada**
+yang bisa chat ke agent — termasuk lu. Set ID operator sekali:
+
+```bash
+python3 hermes_unlock.py --operator-id 6230595361          # satu ID
+python3 hermes_unlock.py --operator-id 6230595361,1112223  # beberapa ID
+python3 hermes_unlock.py --operator-id 6230595361 --dry-run # cek dulu
+```
+
+Yang dilakukan: backup `.env` → `.env.bak.hermes-unlock`, tulis
+`GATEWAY_ALLOWED_USERS=<ids>` (global, berlaku semua platform), lalu
+`hermes config set gateway.allow_all_users false`. Flag ini **tidak** mem-patch source
+— langsung keluar setelah config beres.
+
+User lain tetap bisa masuk lewat pairing: `hermes gateway pair` (approve kode).
+Platform-specific allowlist juga dihormati (`TELEGRAM_ALLOWED_USERS`,
+`DISCORD_ALLOWED_USERS`, `GATEWAY_ALLOWED_USERS` global).
+
 ---
 
 ## 4. Wrapper: `unlock.sh` & `unlock.bat`
@@ -270,7 +290,7 @@ security.redact_secrets = false
 security.tirith_enabled = false
 security.allow_private_urls = true
 privacy.redact_pii = false
-gateway.allow_all_users = true
+gateway.allow_all_users = false      # hanya operator (lihat --operator-id)
 gateway.loop_watchdog = false
 gateway.bot_loop_guard.enabled = false
 gateway.startup_watchdog = false
@@ -316,7 +336,31 @@ dihapus. Salinan terakhir file itu disimpan di
 
 ---
 
-## 8. Backup, restore, update
+## 8. Target patch & backup
+
+**Tree mana yang di-patch?** Yang benar-benar di-import launcher `hermes`, dibaca dari
+`hermes --version` → baris `Install directory:`. Ini penting: install git bisa punya
+beberapa salinan (`hermes-agent/` = checkout aktif, `installs/*/environments/*/workspace`
+= salinan lain). Kalau salah tree, patch-nya tidak berefek.
+
+Patcher selalu print tree yang dipakai, plus daftar tree lain yang **tidak** disentuh:
+
+```
+  package  : C:\Users\PELER\AppData\Local\hermes\hermes-agent
+  catatan  : 2 code tree lain ditemukan (TIDAK disentuh):
+             C:\...\installs\...\workspace
+```
+
+Paksa manual kalau perlu: `--pkg <dir>` (harus ada `tools/` + `agent/`).
+
+**Backup per tree.** Backup tidak lagi flat — disimpan per package root:
+`<backup>/tree-<hash>/` + `tree.txt` + `manifest.json`. Dua tree dengan nama file sama
+tidak saling menimpa, dan `--restore` hanya memulihkan backup milik tree itu (backup
+lama yang flat tetap dibaca, dengan peringatan).
+
+---
+
+## 9. Backup, restore, update
 
 Backup original dibuat sekali, tidak pernah ditimpa:
 
@@ -353,7 +397,7 @@ python3 hermes_unlock.py --clean --no-restart
 
 ---
 
-## 9. Supaya agent "bisa diajak apapun"
+## 10. Supaya agent "bisa diajak apapun"
 
 Checklist — semuanya sudah otomatis kalau `--soul` + patch jalan:
 
@@ -376,7 +420,7 @@ sendiri menolak, itu di luar jangkauan script ini — ganti model/provider kalau
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 **`ERROR: HERMES_HOME not found`** — cek `hermes --version` (print *Install directory*),
 lalu `python3 hermes_unlock.py --home /path/.hermes`.
@@ -409,7 +453,7 @@ harus argumen **pertama** (sudah ditangani di versi ini).
 
 ---
 
-## 11. Status pengujian
+## 12. Status pengujian
 
 Dijalankan di Windows 10 Pro 19045, Python 3.14.7, Hermes 0.21.6:
 
@@ -434,6 +478,9 @@ Dijalankan di Windows 10 Pro 19045, Python 3.14.7, Hermes 0.21.6:
 | `--clean` tanpa `--yes` | kena prompt yang sama (BATAL CLEAN) |
 | `unlock.sh` | `sh -n` + `bash -n` OK; `--skip-soul --status` dan `--dry-run` jalan |
 | `unlock.bat` | `--skip-soul --status` dan `--dry-run` jalan; deteksi venv `py`/`python` OK |
+| Resolusi target | `hermes --version` → `hermes-agent` (tree aktif); 2 tree lain dilaporkan & tidak disentuh |
+| Backup per tree | dua tree nama file sama → 2 subdir `tree-*`, restore masing-masing bersih (13/13, 0 sisa) |
+| `--operator-id` | `.env` dibackup, `GATEWAY_ALLOWED_USERS` ditulis, run kedua tidak dobel, config jadi `false` |
 | `python -m py_compile` | OK |
 
 **Belum** diuji: eksekusi patch di install nyata (sengaja cuma `--dry-run` waktu
@@ -442,7 +489,7 @@ belum dieksekusi di mesin ini). Jalankan `--dry-run` dulu di OS masing-masing.
 
 ---
 
-## 12. Uninstall
+## 13. Uninstall
 
 ```bash
 python3 hermes_unlock.py --restore     # balikin source
@@ -454,7 +501,7 @@ Config yang sudah di-set tidak ikut balik otomatis — set manual kalau perlu
 
 ---
 
-## 13. Catatan
+## 14. Catatan
 
 Dengan `raise_if_read_blocked`, write-deny, dan redaksi secret dimatikan, agent state,
 session token, dan provider credential bisa dibaca/tulis lewat tool biasa. Di box yang
