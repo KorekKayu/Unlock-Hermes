@@ -32,7 +32,6 @@ HELP = """unlock.py — Hermes tanpa guard, satu perintah.
   python unlock.py --audit       bukti runtime: panggil tiap guard
   python unlock.py --dry-run     lihat rencana, tidak menulis apa pun
   python unlock.py --restore     balikin source asli
-  python unlock.py --watch-remove  matikan re-patch otomatis
 """
 
 
@@ -44,7 +43,7 @@ def main() -> int:
     # mode baca-saja / rollback: jangan tambahin --hackmode + --watch-install
     readonly = any(a in ("--status", "--list", "--audit", "--dry-run", "--restore",
                          "--verify-only", "--clean", "--discover", "--version",
-                         "--watch-remove", "--prefill")
+                         "--prefill")
                    for a in args)
     try:
         import hermes_unlock as hu

@@ -1395,14 +1395,13 @@ def install_soul(ctx) -> int:
 
 
 # -----------------------------------------------------------------------------
-# 6c. HACKMODE — kontrak anti-penolakan + prefill injection + watchdog
+# 6c. HACKMODE — kontrak anti-penolakan + prefill injection + scope
 #     Sumber penolakan yang tersisa setelah source patch: system prompt & policy
 #     model. Dua lapis ini yang nutup: HACKMODE.md di HERMES_HOME, dan
 #     prefill_messages_file (disuntik tepat setelah system prompt di tiap call).
 # -----------------------------------------------------------------------------
 HACK_CONTRACT = "hackmode_contract.md"
 HACK_PREFILL = "prefill_hackmode.json"
-WATCH_TASK = "HermesHackMode"
 
 
 def set_prefill_config(ctx, path) -> int:
@@ -1527,69 +1526,6 @@ def install_hackmode(ctx) -> int:
     print("  [hackmode] scope    -> %s (%d target: %s)"
           % (dst_scope, len(targets), ", ".join(targets) or "kosong"))
     return set_prefill_config(ctx, dst_prefill)
-
-
-def _watch_command(ctx):
-    """Prefer pythonw.exe + watch_run.py: nol jendela console, output ke log."""
-    here = Path(__file__).resolve().parent
-    exe = Path(ctx.pybin)
-    pyw = exe.with_name("pythonw.exe")
-    runner = here / "watch_run.py"
-    if pyw.exists() and runner.exists():
-        return [str(pyw), str(runner)]
-    return [ctx.pybin, str(Path(__file__).resolve()), "--yes", "--auto",
-            "--no-banner", "--no-config", "--no-restart"]
-
-
-def watch_install(ctx, minutes: int = 15) -> int:
-    """Re-apply otomatis setelah `hermes update` menimpa patch."""
-    minutes = max(1, int(minutes))
-    argv = _watch_command(ctx)
-    silent = argv and str(argv[0]).lower().endswith("pythonw.exe")
-    if ctx.dry:
-        print("  [watch] would schedule every %d min: %s" % (minutes, " ".join(argv)))
-        return 0
-    if IS_WIN:
-        if silent:
-            tr = '"%s" "%s"' % (argv[0], argv[1])
-        else:
-            tr = 'cmd /c ""%s" "%s" --yes --auto --no-banner --no-config --no-restart"' % (
-                argv[0], argv[1])
-        r = _run(["schtasks", "/Create", "/SC", "MINUTE", "/MO", str(minutes),
-                  "/TN", WATCH_TASK, "/TR", tr, "/F"], timeout=90)
-        ok = bool(r and r.returncode == 0)
-        print("  [watch] schtasks %s (every %d min, task=%s, mode=%s)"
-              % ("OK " if ok else "ERR", minutes, WATCH_TASK,
-                 "silent (pythonw)" if silent else "console"))
-        if not ok:
-            print("          %s" % ((r.stderr or r.stdout or "").strip()[:200] if r else "schtasks tidak ada"))
-        return 0 if ok else 1
-    line = ('*/%d * * * * "%s" "%s" --yes --auto --no-banner --no-config --no-restart '
-            '> /dev/null 2>&1 # hermes-hackmode' % (minutes, argv[0], argv[1]))
-    cur = _run(["crontab", "-l"], timeout=30)
-    text = (cur.stdout or "") if cur else ""
-    if "hermes-hackmode" in text:
-        print("  [watch] cron entry sudah ada")
-        return 0
-    body = (text if text.endswith("\n") or not text else text + "\n") + line + "\n"
-    p = subprocess.run(["crontab", "-"], input=body, text=True, capture_output=True)
-    ok = p.returncode == 0
-    print("  [watch] cron %s (every %d min)" % ("OK " if ok else "ERR", minutes))
-    return 0 if ok else 1
-
-
-def watch_remove(ctx) -> int:
-    if IS_WIN:
-        r = _run(["schtasks", "/Delete", "/TN", WATCH_TASK, "/F"], timeout=60)
-        ok = bool(r and r.returncode == 0)
-        print("  [watch] schtasks delete %s" % ("OK " if ok else "ERR (task tidak ada?)"))
-        return 0 if ok else 1
-    cur = _run(["crontab", "-l"], timeout=30)
-    text = (cur.stdout or "") if cur else ""
-    kept = [ln for ln in text.splitlines() if "hermes-hackmode" not in ln]
-    p = subprocess.run(["crontab", "-"], input="\n".join(kept) + "\n", text=True, capture_output=True)
-    print("  [watch] cron %s" % ("removed" if p.returncode == 0 else "ERR"))
-    return 0 if p.returncode == 0 else 1
 
 
 def hackmode_status(ctx) -> None:
@@ -2101,7 +2037,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-config", action="store_true", help="skip hermes config set")
     ap.add_argument("--no-restart", action="store_true", help="skip gateway restart")
     ap.add_argument("--no-banner", action="store_true", help="skip the IKONA-ONI banner")
-    ap.add_argument("--quiet-banner", action="store_true", help="alias --no-banner (dipakai watch_run.py)")
+    ap.add_argument("--quiet-banner", action="store_true", help="alias --no-banner")
     ap.add_argument("--operator-id", metavar="ID[,ID]",
                     help="allowlist operator: tulis GATEWAY_ALLOWED_USERS ke .env "
                          "(wajib kalau allow_all_users=false)")
@@ -2113,10 +2049,6 @@ def main(argv=None) -> int:
                          "source patch + config + restart + audit")
     ap.add_argument("--prefill", action="store_true",
                     help="install HACKMODE contract + prefill_messages_file only, then stop")
-    ap.add_argument("--watch-install", nargs="?", const=15, type=int, metavar="MIN",
-                    help="jadwalkan re-patch otomatis tiap MIN menit (default 15) — "
-                         "nutup patch yang hilang setelah `hermes update`")
-    ap.add_argument("--watch-remove", action="store_true", help="hapus jadwal re-patch otomatis")
     ap.add_argument("--no-defensive", action="store_true",
                     help="IKUT matikan scan_skill/scan_plugin/tier1 (default: tetap HIDUP "
                          "biar skill/plugin jahat tidak bisa nge-hack VPS/agent)")
@@ -2159,13 +2091,6 @@ def main(argv=None) -> int:
         print("[*] auto: %d guard tambahan dari discovery%s"
               % (len(entries), "" if entries else " (tidak ada)"))
 
-    if a.watch_remove:
-        return watch_remove(ctx)
-    if a.watch_install is not None:
-        rc = watch_install(ctx, a.watch_install)
-        if not (a.hackmode or a.prefill):
-            return rc
-
     if a.prefill and not a.hackmode:
         print("[*] HACKMODE (contract + prefill only)")
         return install_hackmode(ctx)
@@ -2179,8 +2104,7 @@ def main(argv=None) -> int:
         set_operator_allowlist(ctx, a.operator_id.split(","))
         # kalau cuma minta allowlist: set config terkait lalu berhenti (jangan patch source)
         if not (a.soul or a.status or a.list or a.restore or a.clean or a.verify_only
-                or a.inject or a.audit or a.discover or a.hackmode or a.prefill
-                or a.watch_install is not None or a.watch_remove):
+                or a.inject or a.audit or a.discover or a.hackmode or a.prefill):
             launcher = find_launcher()
             if launcher and not ctx.dry:
                 r = _run(launcher + ["config", "set", "gateway.allow_all_users", "false"])

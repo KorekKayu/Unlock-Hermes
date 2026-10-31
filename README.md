@@ -125,7 +125,6 @@ python unlock.py --audit      # bukti runtime: tiap guard dipanggil
 | `--audit` | panggil setiap guard terpatch di venv, assert nilai netral |
 | `--dry-run` | lihat rencana, tidak menulis apa pun |
 | `--restore` | balikin source asli dari `*.ikonaorig` |
-| `--watch-remove` | hapus jadwal re-patch (kalau pernah dipasang) |
 | `--help` | daftar perintah |
 
 ### `hermes_unlock.py` (engine, flag lengkap)
@@ -147,8 +146,6 @@ python unlock.py --audit      # bukti runtime: tiap guard dipanggil
 | `--inject` | monkey-patch di proses ini saja (tanpa sentuh file) |
 | `--inject-watch` | seperti `--inject` + re-apply saat `importlib.reload()` |
 | `--no-defensive` | **ikut** matikan `scan_skill` / `scan_plugin` / `tier1_advisory` |
-| `--watch-install [MIN]` | opt-in: jadwalkan re-patch otomatis tiap MIN menit |
-| `--watch-remove` | hapus jadwal itu |
 | `--operator-id ID[,ID]` | tulis `GATEWAY_ALLOWED_USERS` ke `.env` (gateway cuma untuk operator) |
 | `--no-config` | skip `hermes config set` |
 | `--no-restart` | skip restart gateway |
@@ -466,19 +463,20 @@ Blok `# NOGUARD` numpuk dari versi lama? `python hermes_unlock.py --clean`.
 
 ---
 
-## 15. Watchdog (opt-in, default MATI)
+## 15. Watchdog: DIHAPUS
 
-Tidak ada scheduled task yang dipasang otomatis — nol proses latar, nol jendela CLI.
+Tidak ada scheduled task, tidak ada cron, tidak ada proses latar. Fitur watchdog
+(`--watch-install` / `--watch-remove`) sudah **dihapus dari script** di v3.0, bukan cuma
+dimatikan — jadi tidak bisa kepasang tanpa sengaja.
 
-Kalau tetap mau re-patch otomatis:
+Task lama `HermesHackMode` (kalau pernah ada) dihapus dengan:
 
-```bash
-python hermes_unlock.py --watch-install 30    # Windows: task HermesHackMode
-python hermes_unlock.py --watch-remove        # hapus
-crontab -l | grep hermes-hackmode             # Linux: baris cron
+```bat
+schtasks /Delete /TN HermesHackMode /F
 ```
 
----
+Setelah `hermes update`, patch hilang — jalankan `unlock.bat` manual. Patch-nya idempotent,
+selesai dalam hitungan detik, tanpa efek samping ke sesi yang sedang jalan.
 
 ## 16. Troubleshooting
 
@@ -530,7 +528,7 @@ belum dijalankan. Jalankan `--dry-run` dulu di OS masing-masing.
    model.
 3. **`--inject` itu per-proses**: hanya modul yang sudah di-import di proses itu; subprocess
    mulai bersih. Yang persist adalah source patch.
-4. **`hermes update` menimpa patch** → jalankan ulang (atau pasang `--watch-install`).
+4. **`hermes update` menimpa patch** → jalankan ulang `unlock.bat` / `./unlock.sh`.
 5. **OS-level**: UAC, ACL, `sudo`, sandbox container, permission MCP server — di luar
    jangkauan.
 
