@@ -1,14 +1,12 @@
 @echo off
 rem === IKONA-ONI ===
-rem unlock.bat - one-shot launcher (Windows 10/11, CMD)
+rem unlock.bat - dobel klik, selesai.
 rem
-rem   unlock.bat                  install SOUL.md + patch + config + restart
-rem   unlock.bat --dry-run        lihat rencana, tidak menulis apa pun
-rem   unlock.bat --status         status per file
-rem   unlock.bat --restore        rollback
-rem   unlock.bat --skip-soul ...  jangan sentuh SOUL.md
+rem   unlock.bat              pasang semuanya (SOUL + HACKMODE + patch + config + watchdog)
+rem   unlock.bat --status     cek status patch + HACKMODE
+rem   unlock.bat --restore    balikin source asli
 rem
-rem Semua argumen lain diteruskan apa adanya ke hermes_unlock.py.
+rem Argumen apa pun diteruskan ke unlock.py / hermes_unlock.py.
 rem Override interpreter: set PYTHON=C:\path\python.exe
 
 setlocal
@@ -49,15 +47,11 @@ if not defined SPY (
 
 echo [*] interpreter: %SPY%
 
-rem `shift` tidak mengubah %* di batch, jadi flag-nya dibuang lewat substitusi
-set "SOUL=--soul"
+rem tanpa flag = pasang semuanya; --skip-soul tetap didukung (dibuang dari argumen)
 set "ARGS=%*"
-if /i "%~1"=="--skip-soul" (
-  set "SOUL="
-  set "ARGS=%ARGS:--skip-soul=%"
-)
+if /i "%~1"=="--skip-soul" set "ARGS=%ARGS:--skip-soul=%"
 
-%SPY% "%HERE%hermes_unlock.py" %SOUL% %ARGS%
+%SPY% "%HERE%unlock.py" %ARGS%
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
   echo.

@@ -1,0 +1,10 @@
+{
+  "engagement": "example engagement",
+  "authorized_by": "operator (the maintainer)",
+  "date": "2026-01-01",
+  "notes": "Copy this to scope.json and fill your own targets, then: python unlock.py --prefill",
+  "targets": [
+    "target.example",
+    "*.target.example"
+  ]
+}

@@ -4,3 +4,5 @@ __pycache__/
 wm.log
 wm.pid
 *.zip
+scope.json
+*.log

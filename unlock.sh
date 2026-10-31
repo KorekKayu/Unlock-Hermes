@@ -1,15 +1,11 @@
 #!/bin/sh
 # === IKONA-ONI ===
-# unlock.sh - one-shot launcher (Linux / macOS / WSL / git-bash)
+# unlock.sh - cukup ini, tanpa flag:
+#     ./unlock.sh              pasang semuanya (SOUL + HACKMODE + patch + config + watchdog)
+#     ./unlock.sh --status     cek status patch + HACKMODE
+#     ./unlock.sh --restore    balikin source asli
 #
-#   ./unlock.sh                  install SOUL.md + patch + config + restart
-#   ./unlock.sh --dry-run        lihat rencana, tidak menulis apa pun
-#   ./unlock.sh --status         status per file
-#   ./unlock.sh --restore        rollback
-#   ./unlock.sh --skip-soul ...  jangan sentuh SOUL.md
-#
-# Semua argumen lain diteruskan apa adanya ke hermes_unlock.py.
-# Override interpreter: PYTHON=/path/to/python ./unlock.sh
+# Interpreter: $PYTHON > venv Hermes > python3 > python
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -17,18 +13,10 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && HERE=$(cygpath -m "$HERE") ;;
 esac
 
-SOUL="--soul"
-if [ "${SKIP_SOUL:-0}" = "1" ]; then
-  SOUL=""
-elif [ "${1:-}" = "--skip-soul" ]; then
-  SOUL=""
-  shift
-fi
-
-# --- interpreter: $PYTHON > hermes venv > python3 > python -----------------
 PY="${PYTHON:-}"
 if [ -z "$PY" ]; then
-  GUESS="${HERMES_HOME:-$HOME/.hermes}"
+  GUESS="${HERMES_HOME:-$HOME/AppData/Local/hermes}"
+  [ -d "$GUESS" ] || GUESS="$HOME/.hermes"
   for cand in "$GUESS"/installs/*/environments/*/venv/bin/python \
               "$GUESS"/installs/*/venv/bin/python \
               "$GUESS"/installs/*/environments/*/venv/Scripts/python.exe \
@@ -46,5 +34,4 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-echo "[*] interpreter: $PY"
-exec "$PY" "$HERE/hermes_unlock.py" $SOUL "$@"
+exec "$PY" "$HERE/unlock.py" "$@"
