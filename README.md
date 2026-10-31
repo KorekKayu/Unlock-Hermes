@@ -143,8 +143,7 @@ python unlock.py --audit      # bukti runtime: tiap guard dipanggil
 | `--clean` | rapikan blok `# NOGUARD` yang numpuk (sisa versi lama) |
 | `--restore` | rollback semua file dari backup |
 | `--verify-only` | live check saja |
-| `--inject` | monkey-patch di proses ini saja (tanpa sentuh file) |
-| `--inject-watch` | seperti `--inject` + re-apply saat `importlib.reload()` |
+| `--inject` | monkey-patch di proses ini saja (tanpa sentuh file, tanpa re-apply) |
 | `--no-defensive` | **ikut** matikan `scan_skill` / `scan_plugin` / `tier1_advisory` |
 | `--operator-id ID[,ID]` | tulis `GATEWAY_ALLOWED_USERS` ke `.env` (gateway cuma untuk operator) |
 | `--no-config` | skip `hermes config set` |

@@ -232,7 +232,6 @@ DEFENSIVE_FNS = {
 #     Same neutral values as PLAN, applied to live module objects. Useful for a
 #     read-only/managed install or when only one process should be unlocked:
 #       import hermes_unlock as hu; hu.inject_unlock()   # -> count
-#       hu.inject_watch()                                # re-apply on reload
 # -----------------------------------------------------------------------------
 INJECT_MARK = "__hermes_guard_patched__"
 
@@ -435,21 +434,6 @@ def inject_unlock(verbose=False):
         print("[hermes_unlock.inject] %d/%d guard function(s) neutralised%s"
               % (done, seen, " + loop-guardrail flags" if flags else ""))
     return done + (1 if flags else 0)
-
-
-def inject_watch(verbose=False):
-    """Re-apply automatically after importlib.reload()."""
-    import importlib
-    original = importlib.reload
-
-    def reload_wrapper(module, *a, **k):
-        out = original(module, *a, **k)
-        _inject_apply(verbose)
-        _inject_guardrail_class()
-        return out
-
-    importlib.reload = reload_wrapper
-    return reload_wrapper
 
 
 # -----------------------------------------------------------------------------
@@ -2054,8 +2038,6 @@ def main(argv=None) -> int:
                          "biar skill/plugin jahat tidak bisa nge-hack VPS/agent)")
     ap.add_argument("--inject", action="store_true",
                     help="neutralise guards in this process only (monkey-patch, no files)")
-    ap.add_argument("--inject-watch", action="store_true",
-                    help="like --inject, plus re-apply after importlib.reload()")
     ap.add_argument("--home", metavar="DIR", help="HERMES_HOME override")
     ap.add_argument("--pkg", metavar="DIR", help="package root override (dir with tools/ + agent/)")
     ap.add_argument("--pybin", metavar="PY", help="interpreter override (hermes venv python)")
@@ -2066,14 +2048,11 @@ def main(argv=None) -> int:
     if not (a.no_banner or a.quiet_banner):
         print_banner()
 
-    if a.inject or a.inject_watch:
+    if a.inject:
         if a.operator_id:
             ctx0 = build_ctx(a)
             set_operator_allowlist(ctx0, a.operator_id.split(","))
         total = inject_unlock(verbose=True)
-        if a.inject_watch:
-            inject_watch(verbose=True)
-            print("  watch: installed on importlib.reload")
         print("neutralised %d target(s) in this process" % total)
         return 0
 
