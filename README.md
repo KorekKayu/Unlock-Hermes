@@ -384,6 +384,24 @@ python jailbreak_matrix.py --prompts ./jailbreaks \
 
 Paralel, resume-safe (append CSV), klasifikasi `COMPLY` / `MIXED` / `REFUSE` / `EMPTY` / `ERR`.
 
+### Status route gateway (diuji, prompt artefak)
+
+| Model | Status | Catatan |
+|---|---|---|
+| `deepseek-v4.1-flash-CORAL` | **OK** | nurut, kode keluar, dipakai sebagai default |
+| `DeepSeek-V4.1-Flash-1017-RIVER` | **OK** | nurut, tapi suka menyisipkan satu baris "peringatan keamanan" di awal |
+| `deepseek-v4-1-flash` | 502 | upstream `integrate.api.nvidia.com` gagal |
+| `step-5-preview-UNCENSORED` | 502 | upstream sama |
+| `step-5-preview` | 502 / kosong | route labil; kalau 200, konten sering kosong (reasoning habis token) |
+| `glm-5-3-flash` | 200 tapi kosong | balas `content: ""` |
+| `minimax-m3-1-flash` | 200 tapi kosong | sama |
+
+Rule praktis: **pakai model yang balas kode, bukan yang balas kosong.** Cek cepat:
+
+```bash
+python modelscan.py --max-tokens 1500
+```
+
 ### Hasil uji 259 run (`jailbreak_matrix_all.csv`)
 
 7 model × 37 prompt jailbreak, satu prompt target bernama:
@@ -491,6 +509,8 @@ selesai dalam hitungan detik, tanpa efek samping ke sesi yang sedang jalan.
 | Agent masih nolak | policy model, bukan Hermes | lihat §12–13; harness sudah off |
 | Error **HTTP 451** `content ... is blocked` | model.default diarahkan ke provider yang punya filter konten (mis. route `step-5-hore` di `api.claudepeak.com`), bukan ke gateway lokal | set `model.provider=custom`, `model.base_url=http://127.0.0.1:5899/v1`, `model.api_key=<key gateway>`, `model.default=deepseek-v4.1-flash-CORAL` |
 | Error **HTTP 401** `Invalid API key` setelah ganti model | `model.api_key` masih key provider lama (`cp-...`) | `hermes config set model.api_key <key gateway>` |
+| Model balas **kosong** (`content: ""`) | model reasoning kehabisan `max_tokens`, atau route mati | naikkan `--max-tokens`, atau ganti model (lihat tabel status route) |
+| Model balas **502** | upstream provider mati (`integrate.api.nvidia.com`) | bukan salah config lo — pakai model lain |
 
 ---
 
