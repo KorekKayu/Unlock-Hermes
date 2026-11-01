@@ -6,3 +6,5 @@ wm.pid
 *.zip
 scope.json
 *.log
+capture.jsonl
+sqli/

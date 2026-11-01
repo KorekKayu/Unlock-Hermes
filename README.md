@@ -489,6 +489,8 @@ selesai dalam hitungan detik, tanpa efek samping ke sesi yang sedang jalan.
 | `hermes` CLI tidak ketemu | belum di PATH | patcher cetak perintah `config set` manual |
 | Windows: butuh hak tulis | install di `C:\Program Files` | jalankan CMD as Administrator, atau `--inject` |
 | Agent masih nolak | policy model, bukan Hermes | lihat §12–13; harness sudah off |
+| Error **HTTP 451** `content ... is blocked` | model.default diarahkan ke provider yang punya filter konten (mis. route `step-5-hore` di `api.claudepeak.com`), bukan ke gateway lokal | set `model.provider=custom`, `model.base_url=http://127.0.0.1:5899/v1`, `model.api_key=<key gateway>`, `model.default=deepseek-v4.1-flash-CORAL` |
+| Error **HTTP 401** `Invalid API key` setelah ganti model | `model.api_key` masih key provider lama (`cp-...`) | `hermes config set model.api_key <key gateway>` |
 
 ---
 
@@ -515,6 +517,32 @@ Windows 10 Pro 19045, Python 3.14.7, Hermes Agent v0.21.6+730 (build 2026.9.24).
 
 **Belum diuji:** eksekusi jalur POSIX (Linux/macOS) di mesin asli — ditulis + syntax check,
 belum dijalankan. Jalankan `--dry-run` dulu di OS masing-masing.
+
+---
+
+### Kalau muncul "safety filter refused" / HTTP 451
+
+Itu **bukan** Hermes dan bukan script ini. Cek dulu model mana yang aktif:
+
+```bash
+hermes config get model.default
+hermes config get model.base_url
+```
+
+Kalau `model.default` menunjuk model milik provider eksternal (contoh: `step-5-hore`
+= route `api.claudepeak.com`), filter konten provider itu yang menolak — bukan policy
+lokal. Pindahkan ke gateway sendiri:
+
+```bash
+hermes config set model.provider custom
+hermes config set model.base_url http://127.0.0.1:5899/v1
+hermes config set model.api_key <key gateway>
+hermes config set model.default deepseek-v4.1-flash-CORAL
+```
+
+`capture_proxy.py` disertakan untuk membedah kasus seperti ini: jalankan di port lain,
+set `model.base_url` ke proxy itu, reproduksi request, lalu baca `capture.jsonl`
+(body request + status upstream) sebelum mengubah apa pun.
 
 ---
 
